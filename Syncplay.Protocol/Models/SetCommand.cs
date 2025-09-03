@@ -7,10 +7,19 @@ namespace SyncPlay.Protocol.Models;
 [UsedImplicitly]
 public record SetCommand
 {
-    [JsonPropertyName("user")] public Dictionary<string, SetUserInfo>? Users { get; init; }
-    [JsonPropertyName("ready")] public ReadyInfo? Ready { get; init; }
-    
-    [UsedImplicitly] [JsonExtensionData] public Dictionary<string, JsonElement> ExtraProperties { get; init; } = [];
+    [JsonPropertyName("user"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, SetUserInfo>? Users { get; init; }
+
+    [JsonPropertyName("ready"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ReadyInfo? Ready { get; init; }
+
+    [JsonPropertyName("playlistChange"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public PlaylistChangeInfo? PlaylistChange { get; init; }
+
+    [JsonPropertyName("playlistIndex"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public PlaylistIndexInfo? PlaylistIndex { get; init; }
+
+    [UsedImplicitly] [JsonExtensionData] public Dictionary<string, JsonElement>? ExtraProperties { get; init; }
 
     [UsedImplicitly]
     public record SetUserInfo
@@ -50,11 +59,28 @@ public record SetCommand
     [UsedImplicitly]
     public record ReadyInfo
     {
-        [JsonPropertyName("username")]
-        public required string Username { get; init; }
-        [JsonPropertyName("isReady")]
-        public bool? IsReady { get; init; }
+        [JsonPropertyName("username")] public required string Username { get; init; }
+        [JsonPropertyName("isReady")] public bool? IsReady { get; init; }
+
         [JsonPropertyName("manuallyInitiated")]
         public bool ManuallyInitiated { get; init; }
+    }
+
+    [UsedImplicitly]
+    public record PlaylistChangeInfo
+    {
+        [JsonPropertyName("user"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ChangedBy { get; init; }
+
+        [JsonPropertyName("files")] public required List<string> Files { get; init; }
+    }
+
+    [UsedImplicitly]
+    public record PlaylistIndexInfo
+    {
+        [JsonPropertyName("user"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ChangedBy { get; init; }
+
+        [JsonPropertyName("index")] public int? Index { get; init; }
     }
 }

@@ -25,15 +25,21 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
     [PublicAPI] public float ServerPlaybackPosition { get; private set; } = 0f;
     [PublicAPI] public bool ServerPaused { get; private set; } = true;
+    [PublicAPI] public IReadOnlyList<string> ServerPlaylist { get; private set; } = [];
+    [PublicAPI] public int ServerPlaylistIndex { get; private set; } = 0;
+    
+    [PublicAPI] public string? ServerSelectedPlaylistEntry => ServerPlaylist.ElementAtOrDefault(ServerPlaylistIndex);
 
     [PublicAPI] public double ClientRtt { get; private set; }
     [PublicAPI] public double ServerRtt { get; private set; }
 
-    [PublicAPI] public event Action<string, SyncplayUser>? OnUserJoined, OnUserLeft;
+    [PublicAPI] public event Action<SyncplayUser>? OnUserJoined, OnUserLeft;
 
     // TODO: Change this to an OnReady, that makes sure we've received users etc (Hello command gets sent along side a lot of other state commands, and we need to manually ask for a user list)
     [PublicAPI] public event Action? OnHelloReceived;
     [PublicAPI] public event Action<ChatCommand>? OnChatMessageReceived;
+    [PublicAPI] public event Action<PlaylistChangedEventArgs>? OnPlaylistChanged;
+    [PublicAPI] public event Action<PlaylistIndexChangedEventArgs>? OnPlaylistIndexChanged;
 
     private readonly TcpClient tcpClient = new();
     private Stream? currentStream;
@@ -137,6 +143,38 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         if (!tcpClient.Connected) throw new IOException("Client is not connected to remote server.");
 
         var data = new Dictionary<string, string> { { "Chat", message } };
+
+        await WriteDataAsync(JsonSerializer.Serialize(data));
+    }
+
+    [PublicAPI]
+    public async Task SetPlaylistAsync(IEnumerable<string> playlist)
+    {
+        if (!tcpClient.Connected) throw new IOException("Client is not connected to remote server.");
+
+        var data = new RootCommand(new SetCommand()
+        {
+            PlaylistChange = new SetCommand.PlaylistChangeInfo()
+            {
+                Files = playlist.ToList()
+            }
+        });
+
+        await WriteDataAsync(JsonSerializer.Serialize(data));
+    }
+
+    [PublicAPI]
+    public async Task SetPlaylistIndexAsync(int index)
+    {
+        if (!tcpClient.Connected) throw new IOException("Client is not connected to remote server.");
+
+        var data = new RootCommand(new SetCommand()
+        {
+            PlaylistIndex = new SetCommand.PlaylistIndexInfo()
+            {
+                Index = index
+            }
+        });
 
         await WriteDataAsync(JsonSerializer.Serialize(data));
     }
@@ -325,6 +363,16 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         {
             HandleSet_Ready(setData.Ready);
         }
+
+        if (setData.PlaylistChange != null)
+        {
+            HandleSet_PlaylistChange(setData.PlaylistChange);
+        }
+        
+        if (setData.PlaylistIndex != null)
+        {
+            HandleSet_PlaylistIndex(setData.PlaylistIndex);
+        }
     }
 
     private void HandleSet_Users(Dictionary<string, SetCommand.SetUserInfo> users)
@@ -345,7 +393,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
                     var user = new SyncplayUser(username, userData);
                     Users.Add(user);
 
-                    OnUserJoined?.Invoke(username, user);
+                    OnUserJoined?.Invoke(user);
                 }
                 else if (userData.EventInfo.Left)
                 {
@@ -364,7 +412,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
                     Users.Remove(user);
 
-                    OnUserLeft?.Invoke(username, user);
+                    OnUserLeft?.Invoke(user);
                 }
             }
         }
@@ -385,6 +433,29 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         
         user.IsReady = readyInfo.IsReady.Value;
         logger.LogTrace("Set user {username} ready state as {readyState}", readyInfo.Username, readyInfo.IsReady.Value);
+    }
+
+    private void HandleSet_PlaylistChange(SetCommand.PlaylistChangeInfo playlistChangeInfo)
+    {
+        var oldPlaylist = ServerPlaylist;
+        
+        ServerPlaylist = playlistChangeInfo.Files.AsReadOnly();
+        
+        logger.LogTrace("{user} set server playlist to {playlist}", playlistChangeInfo.ChangedBy, playlistChangeInfo.Files);
+
+        // not sure if I should just return the username or SyncplayUser here
+        OnPlaylistChanged?.Invoke(new PlaylistChangedEventArgs(oldPlaylist, ServerPlaylist, playlistChangeInfo.ChangedBy));
+    }
+    
+    private void HandleSet_PlaylistIndex(SetCommand.PlaylistIndexInfo playlistIndexInfo)
+    {
+        var oldIndex = ServerPlaylistIndex;
+        
+        ServerPlaylistIndex = playlistIndexInfo.Index ?? -1;
+        
+        logger.LogTrace("{user} set server playlist index to {playlistIndex} ({playlistEntry})", playlistIndexInfo.ChangedBy, playlistIndexInfo.Index, ServerSelectedPlaylistEntry);
+
+        OnPlaylistIndexChanged?.Invoke(new PlaylistIndexChangedEventArgs(oldIndex, ServerPlaylistIndex, playlistIndexInfo.ChangedBy));
     }
     #endregion Set
 
@@ -436,7 +507,10 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         return line;
     }
 
-    // TODO: support batching (guessing I just need to manually flush?)
+    // TODO: support batching
+    // maybe i have an optional SyncplayBatch object and push serialized data onto that
+    // and the user can then call a method to commit it or smth
+    // transaction style
     private async Task WriteDataAsync(string text)
     {
         Debug.Assert(writer != null);

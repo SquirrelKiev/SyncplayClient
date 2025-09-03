@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 
 // insane that this isn't built in
 // thank you https://github.com/dotnet/runtime/issues/31081#issuecomment-848697673
+// TODO: is there a better way?
 namespace SyncPlay.Protocol;
 
 public class JsonStringEnumConverterEx<TEnum> : JsonConverter<TEnum> where TEnum : struct, System.Enum
