@@ -27,7 +27,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     [PublicAPI] public bool ServerPaused { get; private set; } = true;
     [PublicAPI] public IReadOnlyList<string> ServerPlaylist { get; private set; } = [];
     [PublicAPI] public int ServerPlaylistIndex { get; private set; } = 0;
-    
+
     [PublicAPI] public string? ServerSelectedPlaylistEntry => ServerPlaylist.ElementAtOrDefault(ServerPlaylistIndex);
 
     [PublicAPI] public double ClientRtt { get; private set; }
@@ -60,6 +60,9 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     {
     }
 
+    #region Public API
+
+    [PublicAPI]
     // [MemberNotNull(nameof(ListenTask))] // technically will be null if this task gets canceled. i suppose it'll throw in that case tho?
     public async Task ConnectAsync(string host, int port, string? hostPassword, string roomName, string username,
         CancellationToken cancellationToken = default)
@@ -140,7 +143,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     [PublicAPI]
     public async Task SendChatMessageAsync(string message)
     {
-        if (!tcpClient.Connected) throw new IOException("Client is not connected to remote server.");
+        ThrowIfNotReady();
 
         var data = new Dictionary<string, string> { { "Chat", message } };
 
@@ -150,7 +153,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     [PublicAPI]
     public async Task SetPlaylistAsync(IEnumerable<string> playlist)
     {
-        if (!tcpClient.Connected) throw new IOException("Client is not connected to remote server.");
+        ThrowIfNotReady();
 
         var data = new RootCommand(new SetCommand()
         {
@@ -166,7 +169,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     [PublicAPI]
     public async Task SetPlaylistIndexAsync(int index)
     {
-        if (!tcpClient.Connected) throw new IOException("Client is not connected to remote server.");
+        ThrowIfNotReady();
 
         var data = new RootCommand(new SetCommand()
         {
@@ -178,6 +181,8 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
         await WriteDataAsync(JsonSerializer.Serialize(data));
     }
+
+    #endregion Public API
 
     private async Task MainListenLoopAsync(CancellationToken cancellationToken)
     {
@@ -305,7 +310,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     private void HandleChat(ChatCommand chat)
     {
         logger.LogTrace("Chat message received: <{user}> {message}", chat.Username, chat.Message);
-        
+
         OnChatMessageReceived?.Invoke(chat);
     }
 
@@ -332,6 +337,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
                 ClientRtt = ClientRtt
             };
         }
+
         if (serverState.PlayState != null)
         {
             ServerPlaybackPosition = serverState.PlayState.Position;
@@ -352,6 +358,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     }
 
     #region Set
+
     private void HandleSet(SetCommand setData)
     {
         if (setData.Users != null)
@@ -368,7 +375,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         {
             HandleSet_PlaylistChange(setData.PlaylistChange);
         }
-        
+
         if (setData.PlaylistIndex != null)
         {
             HandleSet_PlaylistIndex(setData.PlaylistIndex);
@@ -422,7 +429,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     {
         if (!readyInfo.IsReady.HasValue)
             return;
-        
+
         var user = Users.FirstOrDefault(x => x.Username == readyInfo.Username);
 
         if (user == null)
@@ -430,7 +437,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
             logger.LogWarning("User {username} is not in the user list, ignoring ready state.", readyInfo.Username);
             return;
         }
-        
+
         user.IsReady = readyInfo.IsReady.Value;
         logger.LogTrace("Set user {username} ready state as {readyState}", readyInfo.Username, readyInfo.IsReady.Value);
     }
@@ -438,25 +445,30 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     private void HandleSet_PlaylistChange(SetCommand.PlaylistChangeInfo playlistChangeInfo)
     {
         var oldPlaylist = ServerPlaylist;
-        
+
         ServerPlaylist = playlistChangeInfo.Files.AsReadOnly();
-        
-        logger.LogTrace("{user} set server playlist to {playlist}", playlistChangeInfo.ChangedBy, playlistChangeInfo.Files);
+
+        logger.LogTrace("{user} set server playlist to {playlist}", playlistChangeInfo.ChangedBy,
+            playlistChangeInfo.Files);
 
         // not sure if I should just return the username or SyncplayUser here
-        OnPlaylistChanged?.Invoke(new PlaylistChangedEventArgs(oldPlaylist, ServerPlaylist, playlistChangeInfo.ChangedBy));
+        OnPlaylistChanged?.Invoke(new PlaylistChangedEventArgs(oldPlaylist, ServerPlaylist,
+            playlistChangeInfo.ChangedBy));
     }
-    
+
     private void HandleSet_PlaylistIndex(SetCommand.PlaylistIndexInfo playlistIndexInfo)
     {
         var oldIndex = ServerPlaylistIndex;
-        
-        ServerPlaylistIndex = playlistIndexInfo.Index ?? -1;
-        
-        logger.LogTrace("{user} set server playlist index to {playlistIndex} ({playlistEntry})", playlistIndexInfo.ChangedBy, playlistIndexInfo.Index, ServerSelectedPlaylistEntry);
 
-        OnPlaylistIndexChanged?.Invoke(new PlaylistIndexChangedEventArgs(oldIndex, ServerPlaylistIndex, playlistIndexInfo.ChangedBy));
+        ServerPlaylistIndex = playlistIndexInfo.Index ?? -1;
+
+        logger.LogTrace("{user} set server playlist index to {playlistIndex} ({playlistEntry})",
+            playlistIndexInfo.ChangedBy, playlistIndexInfo.Index, ServerSelectedPlaylistEntry);
+
+        OnPlaylistIndexChanged?.Invoke(
+            new PlaylistIndexChangedEventArgs(oldIndex, ServerPlaylistIndex, playlistIndexInfo.ChangedBy));
     }
+
     #endregion Set
 
     private void HandleList(Dictionary<string, Dictionary<string, ListCommandUserInfo>> list)
@@ -495,6 +507,11 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         var json = JsonSerializer.Serialize(data);
 
         await WriteDataAsync(json);
+    }
+
+    private void ThrowIfNotReady()
+    {
+        if (!tcpClient.Connected) throw new IOException("Client is not connected to remote server.");
     }
 
     private async Task<string?> ReadDataAsync(CancellationToken cancellationToken)
