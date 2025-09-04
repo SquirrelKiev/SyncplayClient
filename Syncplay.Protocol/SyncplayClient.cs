@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
@@ -21,8 +22,12 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     [PublicAPI] public FeatureSet? ServerFeatures { get; private set; }
     [PublicAPI] public string? ServerVersion { get; private set; }
     [PublicAPI] public string? MessageOfTheDay { get; private set; }
-    [PublicAPI] public List<SyncplayUser> Users { get; private set; } = [];
-    [PublicAPI] public SyncplayUser CurrentUser => Users.First(x => x.Username == Username); // TODO: something less ass
+    [PublicAPI] public IReadOnlyCollection<SyncplayUser> Users => userlist.Values;
+
+    [PublicAPI]
+    public SyncplayUser CurrentUser => GetUser(Username) ??
+                                       throw new InvalidOperationException(
+                                           "Could not find current user in user list? This is bad, report this.");
 
     [PublicAPI] public float ServerPlaybackPosition { get; private set; } = 0f;
     [PublicAPI] public bool ServerPaused { get; private set; } = true;
@@ -43,6 +48,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     [PublicAPI] public event Action<PlaylistIndexChangedEventArgs>? OnPlaylistIndexChanged;
     [PublicAPI] public event Action<SyncplayUser>? OnUserReadyStateChanged;
 
+    private readonly Dictionary<string, SyncplayUser> userlist = [];
     private readonly TcpClient tcpClient = new();
     private Stream? currentStream;
     private StreamReader? reader;
@@ -88,7 +94,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
             Host = host;
             Port = port;
-            RoomName = roomName;
+            RoomName = roomName; // this and username will be overwritten by the hello response
             Username = username;
             string? passwordHash = null;
             if (hostPassword != null)
@@ -200,6 +206,18 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         await WriteDataAsync(JsonSerializer.Serialize(data));
     }
 
+    [PublicAPI]
+    public SyncplayUser? GetUser(string username)
+    {
+        userlist.TryGetValue(username, out var userObject);
+
+        return userObject;
+    }
+
+    [PublicAPI]
+    public bool TryGetUser(string username, [MaybeNullWhen(false)] out SyncplayUser user) =>
+        userlist.TryGetValue(username, out user);
+
     #endregion Public API
 
     private async Task MainListenLoopAsync(CancellationToken cancellationToken)
@@ -230,6 +248,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
                 {
                     var obj = commandRoot.Hello;
 
+                    Username = obj.Username;
                     RoomName = obj.RoomInfo.Name;
                     ServerFeatures = obj.Features;
                     ServerVersion = obj.RealVersion;
@@ -416,7 +435,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
                         userData.RoomInfo.Name);
 
                     var user = new SyncplayUser(username, userData);
-                    Users.Add(user);
+                    userlist.Add(user.Username, user);
 
                     OnUserJoined?.Invoke(user);
                 }
@@ -425,9 +444,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
                     logger.LogInformation("User {username} has left room {roomName}.", username,
                         userData.RoomInfo.Name);
 
-                    var user = Users.FirstOrDefault(x => x.Username == username);
-
-                    if (user == null)
+                    if (!TryGetUser(username, out var user))
                     {
                         logger.LogError(
                             "Internal error: User {username} could not be found in local user list! This is very bad, we should be aware of them.",
@@ -435,7 +452,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
                         continue;
                     }
 
-                    Users.Remove(user);
+                    userlist.Remove(user.Username);
 
                     OnUserLeft?.Invoke(user);
                 }
@@ -445,12 +462,10 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
     private void HandleSet_Ready(SetCommand.ReadyInfo readyInfo)
     {
-        if (!readyInfo.IsReady.HasValue)
+        if (!readyInfo.IsReady.HasValue || readyInfo.Username == null)
             return;
 
-        var user = Users.FirstOrDefault(x => x.Username == readyInfo.Username);
-
-        if (user == null)
+        if (!TryGetUser(readyInfo.Username, out var user))
         {
             logger.LogWarning("User {username} is not in the user list, ignoring ready state.", readyInfo.Username);
             return;
@@ -466,7 +481,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     {
         var oldPlaylist = ServerPlaylist;
 
-        ServerPlaylist = playlistChangeInfo.Files.AsReadOnly();
+        ServerPlaylist = playlistChangeInfo.Files.ToList().AsReadOnly();
 
         logger.LogTrace("{user} set server playlist to {playlist}", playlistChangeInfo.ChangedBy,
             playlistChangeInfo.Files);
@@ -503,19 +518,17 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
         foreach (var (username, userInfo) in usernameToDataMap)
         {
-            var existingUser = Users.FirstOrDefault(x => x.Username == username);
-
-            if (existingUser == null)
+            if (TryGetUser(username, out var existingUser))
+            {
+                logger.LogTrace("Existing user {username}, updating state.", username);
+                existingUser.UpdateProperties(userInfo);
+            }
+            else
             {
                 logger.LogTrace("Not seen user {username} before, adding to user list.", username);
 
                 existingUser = new SyncplayUser(username, userInfo);
-                Users.Add(existingUser);
-            }
-            else
-            {
-                logger.LogTrace("Existing user {username}, updating state.", username);
-                existingUser.UpdateProperties(userInfo);
+                userlist.Add(existingUser.Username, existingUser);
             }
         }
     }
