@@ -15,6 +15,9 @@ namespace SyncPlay.Protocol;
 
 public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 {
+    // not sure if I should have these as nullable or not - for API consumer reasons
+    // the only time they're null is if the user hasn't called ConnectAsync yet for whatever reason
+    // but that shouldn't ever really be a problem
     [PublicAPI] public string? Host { get; private set; }
     [PublicAPI] public int? Port { get; private set; }
     [PublicAPI] public string? Username { get; private set; }
@@ -123,7 +126,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
             await WriteDataAsync(new RootCommand(new TlsSupportCommand
             {
                 StartTls = TlsSupportCommand.TlsState.Send
-            }).ToJson());
+            }));
 
             var response = await ReadDataAsync(cancellationToken);
             if (response == null) throw new IOException("Connection closed before TLS negotiation?");
@@ -142,7 +145,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
                 {
                     Name = roomName
                 }
-            }).ToJson());
+            }));
 
             ListenTask = Task.Run(() => MainListenLoopAsync(cancellationToken), cancellationToken);
         }
@@ -167,7 +170,10 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     {
         ThrowIfNotReady();
 
-        var data = new Dictionary<string, string> { { "Chat", message } };
+        var data = new SentByClientChatCommand()
+        {
+            Message = message
+        };
 
         await WriteDataAsync(JsonSerializer.Serialize(data));
     }
@@ -185,7 +191,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
             }
         });
 
-        await WriteDataAsync(JsonSerializer.Serialize(data));
+        await WriteDataAsync(data);
     }
 
     [PublicAPI]
@@ -201,7 +207,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
             }
         });
 
-        await WriteDataAsync(JsonSerializer.Serialize(data));
+        await WriteDataAsync(data);
     }
 
     [PublicAPI]
@@ -217,7 +223,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
             }
         });
 
-        await WriteDataAsync(JsonSerializer.Serialize(data));
+        await WriteDataAsync(data);
     }
 
     [PublicAPI]
@@ -549,11 +555,10 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
     private async Task RequestUserListRefreshAsync()
     {
-        var data = new Dictionary<string, object?> { { "List", null } };
+        // dumb
+        const string command = "{\"List\": null}";
 
-        var json = JsonSerializer.Serialize(data);
-
-        await WriteDataAsync(json);
+        await WriteDataAsync(command);
     }
 
     private void ThrowIfNotReady()
@@ -575,6 +580,8 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     // maybe i have an optional SyncplayBatch object and push serialized data onto that
     // and the user can then call a method to commit it or smth
     // transaction style
+    private async Task WriteDataAsync(RootCommand command) => await WriteDataAsync(command.ToJson());
+
     private async Task WriteDataAsync(string text)
     {
         Debug.Assert(writer != null);
