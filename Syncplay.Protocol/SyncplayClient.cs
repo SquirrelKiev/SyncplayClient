@@ -25,9 +25,23 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     [PublicAPI] public IReadOnlyCollection<SyncplayUser> Users => userlist.Values;
 
     [PublicAPI]
-    public SyncplayUser CurrentUser => GetUser(Username) ??
-                                       throw new InvalidOperationException(
-                                           "Could not find current user in user list? This is bad, report this.");
+    public SyncplayUser CurrentUser
+    {
+        get
+        {
+            if (currentUser != null)
+                return currentUser;
+
+            if (Username == null || !TryGetUser(Username, out var user))
+                throw new InvalidOperationException(
+                    "Could not find current user in user list? This is bad, report this.");
+
+            currentUser = user;
+            return user;
+        }
+    }
+
+    private SyncplayUser? currentUser;
 
     [PublicAPI] public float ServerPlaybackPosition { get; private set; } = 0f;
     [PublicAPI] public bool ServerPaused { get; private set; } = true;
