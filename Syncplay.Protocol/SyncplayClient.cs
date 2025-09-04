@@ -22,6 +22,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     [PublicAPI] public string? ServerVersion { get; private set; }
     [PublicAPI] public string? MessageOfTheDay { get; private set; }
     [PublicAPI] public List<SyncplayUser> Users { get; private set; } = [];
+    [PublicAPI] public SyncplayUser CurrentUser => Users.First(x => x.Username == Username); // TODO: something less ass
 
     [PublicAPI] public float ServerPlaybackPosition { get; private set; } = 0f;
     [PublicAPI] public bool ServerPaused { get; private set; } = true;
@@ -40,6 +41,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     [PublicAPI] public event Action<ChatCommand>? OnChatMessageReceived;
     [PublicAPI] public event Action<PlaylistChangedEventArgs>? OnPlaylistChanged;
     [PublicAPI] public event Action<PlaylistIndexChangedEventArgs>? OnPlaylistIndexChanged;
+    [PublicAPI] public event Action<SyncplayUser>? OnUserReadyStateChanged;
 
     private readonly TcpClient tcpClient = new();
     private Stream? currentStream;
@@ -176,6 +178,22 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
             PlaylistIndex = new SetCommand.PlaylistIndexInfo()
             {
                 Index = index
+            }
+        });
+
+        await WriteDataAsync(JsonSerializer.Serialize(data));
+    }
+
+    [PublicAPI]
+    public async Task SetReadyAsync(bool ready)
+    {
+        ThrowIfNotReady();
+
+        var data = new RootCommand(new SetCommand()
+        {
+            Ready = new SetCommand.ReadyInfo()
+            {
+                IsReady = ready
             }
         });
 
@@ -440,6 +458,8 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
         user.IsReady = readyInfo.IsReady.Value;
         logger.LogTrace("Set user {username} ready state as {readyState}", readyInfo.Username, readyInfo.IsReady.Value);
+
+        OnUserReadyStateChanged?.Invoke(user);
     }
 
     private void HandleSet_PlaylistChange(SetCommand.PlaylistChangeInfo playlistChangeInfo)

@@ -59,7 +59,7 @@ public record SetCommand
     [UsedImplicitly]
     public record ReadyInfo
     {
-        [JsonPropertyName("username")] public required string Username { get; init; }
+        [JsonPropertyName("username")] public string? Username { get; init; }
         [JsonPropertyName("isReady")] public bool? IsReady { get; init; }
 
         [JsonPropertyName("manuallyInitiated")]
