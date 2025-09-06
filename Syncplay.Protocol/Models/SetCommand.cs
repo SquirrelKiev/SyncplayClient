@@ -19,6 +19,10 @@ public record SetCommand
     [JsonPropertyName("playlistIndex"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public PlaylistIndexInfo? PlaylistIndex { get; init; }
 
+    /// <remarks>Only used for client requests</remarks>
+    [JsonPropertyName("file"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MediaFile? File { get; init; }
+
     [UsedImplicitly] [JsonExtensionData] public Dictionary<string, JsonElement>? ExtraProperties { get; init; }
 
     [UsedImplicitly]

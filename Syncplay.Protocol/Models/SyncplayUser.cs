@@ -2,36 +2,33 @@
 
 namespace SyncPlay.Protocol.Models;
 
-public record SyncplayUser
+public class SyncplayUser
 {
-    internal SyncplayUser() { }
+    internal SyncplayUser()
+    {
+    }
 
     public SyncplayUser(string username, SetCommand.SetUserInfo userData)
-    {
-        UpdateProperties(userData);
-        
-        Username = username;
-    }
-
-    public SyncplayUser(string username, ListCommandUserInfo userInfo)
-    {
-        UpdateProperties(userInfo);
-        
-        Username = username;
-    }
-
-    public void UpdateProperties(SetCommand.SetUserInfo userData)
     {
         Debug.Assert(userData.EventInfo != null);
         Debug.Assert(userData.EventInfo.Version != null);
         Debug.Assert(userData.EventInfo.Features != null);
-        
+
         IsReady = false;
         IsPaused = true;
         Position = 0;
         FileInfo = userData.FileInfo;
         Version = userData.EventInfo.Version;
         Features = userData.EventInfo.Features;
+
+        Username = username;
+    }
+
+    public SyncplayUser(string username, ListCommandUserInfo userInfo)
+    {
+        UpdateProperties(userInfo);
+
+        Username = username;
     }
 
     public void UpdateProperties(ListCommandUserInfo userInfo)

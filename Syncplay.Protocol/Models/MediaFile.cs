@@ -3,78 +3,92 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using JetBrains.Annotations;
 
-namespace SyncPlay.Protocol;
+namespace SyncPlay.Protocol.Models;
 
 [UsedImplicitly]
 public record MediaFile
 {
-    [JsonPropertyName("duration")]
-    public float Duration { get; set; }
+    [JsonPropertyName("name")] public required string Name { get; init; }
 
-    [JsonPropertyName("name")] public string FileName { get; set; } = null!;
+    [JsonPropertyName("duration")] public required float Duration { get; init; }
+
     // FileSize can either be a number (the actual file size or just 0 if the room member isn't sharing) or the number, but hashed.
     // The hash is sent as a json string, the number is sent as... a json number. 
     // C# is a statically typed language.
     // Curse you Python.
-    [JsonPropertyName("size")]
-    public StringFloatUnion FileSize { get; set; }
+    [JsonPropertyName("size")] public required StringLongUnion FileSize { get; init; }
+
+    public MediaFile()
+    {
+    }
+
+    [SetsRequiredMembers]
+    public MediaFile(string name, float duration, long fileSize)
+    {
+        Name = name;
+        Duration = duration;
+        FileSize = fileSize;
+    }
 }
 
-[JsonConverter(typeof(StringFloatUnionConverter))]
-public readonly record struct StringFloatUnion
+[JsonConverter(typeof(StringLongUnionConverter))]
+public readonly record struct StringLongUnion
 {
     public string? StringValue { get; }
-    public float? FloatValue { get; }
+    public long? LongValue { get; }
 
     [MemberNotNullWhen(true, nameof(StringValue))]
     public bool IsString => StringValue is not null;
-    
-    [MemberNotNullWhen(true, nameof(FloatValue))]
-    public bool IsFloat => FloatValue.HasValue;
 
-    public StringFloatUnion(string value)
+    [MemberNotNullWhen(true, nameof(LongValue))]
+    public bool IsLong => LongValue.HasValue;
+
+    public StringLongUnion(string value)
     {
         StringValue = value;
-        FloatValue = null;
+        LongValue = null;
     }
 
-    public StringFloatUnion(float value)
+    public StringLongUnion(long value)
     {
-        FloatValue = value;
+        LongValue = value;
         StringValue = null;
     }
 
-    public override string ToString() => IsString ? StringValue : FloatValue?.ToString() ?? "";
+    public static implicit operator StringLongUnion(string value) => new(value);
+    public static implicit operator StringLongUnion(long value) => new(value);
+
+    public override string ToString() => IsString ? StringValue : LongValue?.ToString() ?? "";
 }
 
-public class StringFloatUnionConverter : JsonConverter<StringFloatUnion>
+public class StringLongUnionConverter : JsonConverter<StringLongUnion>
 {
-    public override StringFloatUnion Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    public override StringLongUnion Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         if (reader.TokenType == JsonTokenType.String)
         {
             string str = reader.GetString()!;
-            return new StringFloatUnion(str);
+            return new StringLongUnion(str);
         }
 
         if (reader.TokenType == JsonTokenType.Number)
         {
-            float num = reader.GetSingle();
-            return new StringFloatUnion(num);
+            var num = reader.GetInt64();
+            return new StringLongUnion(num);
         }
 
         throw new JsonException($"Expected string or number token, got {reader.TokenType}");
     }
 
-    public override void Write(Utf8JsonWriter writer, StringFloatUnion value, JsonSerializerOptions options)
+    public override void Write(Utf8JsonWriter writer, StringLongUnion value, JsonSerializerOptions options)
     {
         if (value.IsString)
         {
             writer.WriteStringValue(value.StringValue);
         }
-        else if (value.IsFloat)
+        else if (value.IsLong)
         {
-            writer.WriteNumberValue(value.FloatValue.Value);
+            writer.WriteNumberValue(value.LongValue.Value);
         }
         else
         {

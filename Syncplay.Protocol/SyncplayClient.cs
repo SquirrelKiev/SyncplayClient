@@ -56,14 +56,14 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     [PublicAPI] public double ClientRtt { get; private set; }
     [PublicAPI] public double ServerRtt { get; private set; }
 
-    [PublicAPI] public event Action<SyncplayUser>? OnUserJoined, OnUserLeft;
+    [PublicAPI] public event Action<SyncplayUser>? OnUserJoined, OnUserLeft, OnUserReadyStateChanged;
 
     // TODO: Change this to an OnReady, that makes sure we've received users etc (Hello command gets sent along side a lot of other state commands, and we need to manually ask for a user list)
     [PublicAPI] public event Action? OnHelloReceived;
     [PublicAPI] public event Action<ChatCommand>? OnChatMessageReceived;
     [PublicAPI] public event Action<PlaylistChangedEventArgs>? OnPlaylistChanged;
     [PublicAPI] public event Action<PlaylistIndexChangedEventArgs>? OnPlaylistIndexChanged;
-    [PublicAPI] public event Action<SyncplayUser>? OnUserReadyStateChanged;
+    [PublicAPI] public event Action<UserFileChangedEventArgs>? OnUserFileChanged;
 
     private readonly Dictionary<string, SyncplayUser> userlist = [];
     private readonly TcpClient tcpClient = new();
@@ -88,7 +88,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     #region Public API
 
     [PublicAPI]
-    // [MemberNotNull(nameof(ListenTask))] // technically will be null if this task gets canceled. i suppose it'll throw in that case tho?
+    // [MemberNotNull(nameof(ListenTask))] // technically will be null if this task gets canceled. I suppose it'll throw in that case tho?
     public async Task ConnectAsync(string host, int port, string? hostPassword, string roomName, string username,
         CancellationToken cancellationToken = default)
     {
@@ -227,6 +227,20 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     }
 
     [PublicAPI]
+    public async Task SetFileAsync(MediaFile file)
+    {
+        // syncplay server seems to completely ignore null files (`{"Set":{"file":{}}}` or `{"Set":{"file":null}}`)
+        ThrowIfNotReady();
+
+        var data = new RootCommand(new SetCommand()
+        {
+            File = file
+        });
+
+        await WriteDataAsync(data);
+    }
+
+    [PublicAPI]
     public SyncplayUser? GetUser(string username)
     {
         userlist.TryGetValue(username, out var userObject);
@@ -235,7 +249,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     }
 
     [PublicAPI]
-    public bool TryGetUser(string username, [MaybeNullWhen(false)] out SyncplayUser user) =>
+    public bool TryGetUser(string username, [NotNullWhen(true)] out SyncplayUser? user) =>
         userlist.TryGetValue(username, out user);
 
     #endregion Public API
@@ -476,6 +490,25 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
                     OnUserLeft?.Invoke(user);
                 }
+            }
+
+            if (userData.FileInfo != null)
+            {
+                if (!TryGetUser(username, out var user))
+                {
+                    logger.LogError(
+                        "Internal error: User {username} could not be found in local user list! This is very bad, we should be aware of them.",
+                        username);
+                    continue;
+                }
+
+                var oldFile = user.FileInfo;
+
+                user.FileInfo = userData.FileInfo;
+
+                logger.LogTrace("{user} set file to {file}", username, userData.FileInfo);
+
+                OnUserFileChanged?.Invoke(new UserFileChangedEventArgs(user, oldFile));
             }
         }
     }
