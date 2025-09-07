@@ -551,7 +551,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         }
         else
         {
-            clientLastForwardDelay = ClientAverageRtt / 2;
+            clientLastForwardDelay = clientAverageRtt / 2;
         }
 
         ClientRtt = clientRtt;
