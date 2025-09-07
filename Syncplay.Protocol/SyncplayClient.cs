@@ -46,24 +46,33 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
     private SyncplayUser? currentUser;
 
+    // wonder if this should be a float or a double
     [PublicAPI] public float ServerPlaybackPosition { get; private set; } = 0f;
     [PublicAPI] public bool ServerPaused { get; private set; } = true;
+    [PublicAPI] public string? ServerPlaybackSetBy { get; private set; }
+    [PublicAPI] public bool ServerLastPlaybackWasSeek { get; private set; }
     [PublicAPI] public IReadOnlyList<string> ServerPlaylist { get; private set; } = [];
     [PublicAPI] public int ServerPlaylistIndex { get; private set; } = 0;
 
     [PublicAPI] public string? ServerSelectedPlaylistEntry => ServerPlaylist.ElementAtOrDefault(ServerPlaylistIndex);
 
     [PublicAPI] public double ClientRtt { get; private set; }
+    [PublicAPI] public double ClientLastForwardDelay { get; set; }
+    private double ClientAverageRtt { get; set; }
     [PublicAPI] public double ServerRtt { get; private set; }
 
     [PublicAPI] public event Action<SyncplayUser>? OnUserJoined, OnUserLeft, OnUserReadyStateChanged;
 
-    // TODO: Change this to an OnReady, that makes sure we've received users etc (Hello command gets sent along side a lot of other state commands, and we need to manually ask for a user list)
+    // TODO: Change this to an OnReady, that makes sure we've received users etc
+    // (Hello command gets sent along side a lot of other state commands, and we need to manually ask for a user list)
     [PublicAPI] public event Action? OnHelloReceived;
+    [PublicAPI] public event Action? OnForcedPlaybackState;
     [PublicAPI] public event Action<ChatCommand>? OnChatMessageReceived;
     [PublicAPI] public event Action<PlaylistChangedEventArgs>? OnPlaylistChanged;
     [PublicAPI] public event Action<PlaylistIndexChangedEventArgs>? OnPlaylistIndexChanged;
     [PublicAPI] public event Action<UserFileChangedEventArgs>? OnUserFileChanged;
+
+    [PublicAPI] public event Func<PassiveStateReport?>? RequestPassiveStateReport;
 
     private readonly Dictionary<string, SyncplayUser> userlist = [];
     private readonly TcpClient tcpClient = new();
@@ -241,6 +250,33 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     }
 
     [PublicAPI]
+    public async Task ForcePlaybackStateAsync(bool paused, float position, bool isSeek)
+    {
+        ThrowIfNotReady();
+
+        var data = new RootCommand(new StateCommand()
+        {
+            PlayState = new StateCommand.PlayStateInfo()
+            {
+                Paused = paused,
+                Position = position,
+                DoSeek = isSeek
+            },
+            IgnoringOnTheFly = new StateCommand.IgnoringOnTheFlyInfo()
+            {
+                ClientIgnoring = true
+            },
+            Ping = new StateCommand.PingInfo()
+            {
+                ClientLatencyCalculation = GetUnixTimestampInSeconds(),
+                ClientRtt = ClientRtt
+            }
+        });
+
+        await WriteDataAsync(data);
+    }
+
+    [PublicAPI]
     public SyncplayUser? GetUser(string username)
     {
         userlist.TryGetValue(username, out var userObject);
@@ -393,26 +429,40 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         {
             var serverLatencyCalc = serverState.Ping.LatencyCalculation;
 
-            var clientLatencyCalc =
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000d; // server wants it in seconds
+            Debug.Assert(serverState.Ping.ServerRtt != null);
 
-            // this message is from the server; should have the ServerRtt - if not, we should probably throw anyway
-            ServerRtt = serverState.Ping.ServerRtt!.Value;
-            ClientRtt = clientLatencyCalc - serverState.Ping.ClientLatencyCalculation;
+            var timestamp = serverState.Ping.ClientLatencyCalculation;
+            var serverRtt = serverState.Ping.ServerRtt;
+
+            if (timestamp != null && serverRtt != null)
+            {
+                UpdateClientRtt(timestamp.Value, serverRtt.Value);
+                ServerRtt = serverRtt.Value;
+            }
+
+            var clientLatencyCalc = GetUnixTimestampInSeconds();
 
             responseState.Ping = new StateCommand.PingInfo
             {
                 LatencyCalculation = serverLatencyCalc,
                 ClientLatencyCalculation = clientLatencyCalc,
-                // not sure if this actually does anything? all the docs just have it as 0.
                 ClientRtt = ClientRtt
             };
+            logger.LogInformation("ping: {ping}, serverrtt: {serverRtt}, fwdelay: {forward}", responseState.Ping,
+                serverRtt, ClientLastForwardDelay);
         }
 
         if (serverState.PlayState != null)
         {
             ServerPlaybackPosition = serverState.PlayState.Position;
             ServerPaused = serverState.PlayState.Paused;
+            ServerPlaybackSetBy = serverState.PlayState.SetBy;
+            ServerLastPlaybackWasSeek = serverState.PlayState.DoSeek ?? false;
+
+            if (serverState.Ping != null && !ServerPaused)
+            {
+                ServerPlaybackPosition = (float)(ServerPlaybackPosition + ClientLastForwardDelay);
+            }
 
             if (serverState.IgnoringOnTheFly?.ServerIgnoring == true)
             {
@@ -420,12 +470,67 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
                 {
                     ServerIgnoring = true
                 };
+
+                if (serverState.IgnoringOnTheFly.ClientIgnoring == false)
+                    OnForcedPlaybackState?.Invoke();
+            }
+
+            var passiveStateReport = RequestPassiveStateReport?.Invoke();
+
+            if (passiveStateReport != null)
+            {
+                responseState.PlayState = new StateCommand.PlayStateInfo
+                {
+                    Position = passiveStateReport.Position,
+                    Paused = passiveStateReport.Paused
+                };
             }
         }
 
         var data = new RootCommand(responseState).ToJson();
 
         await WriteDataAsync(data);
+    }
+
+    private static double GetUnixTimestampInSeconds()
+    {
+        // server wants it in seconds
+        return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000d;
+    }
+
+    // math magic i have no idea what does
+    // https://github.com/Syncplay/syncplay/blob/db95264fae901e32e4d2ce991fc265b68545aaff/syncplay/protocols.py#L790
+    private void UpdateClientRtt(double timestamp, double senderRtt)
+    {
+        var clientRtt = GetUnixTimestampInSeconds() - timestamp;
+        if (clientRtt < 0 || senderRtt < 0)
+        {
+            ClientRtt = clientRtt;
+            return;
+        }
+
+        var clientAverageRtt = ClientAverageRtt;
+
+        if (clientAverageRtt == 0)
+            clientAverageRtt = clientRtt;
+
+        const float pingMovingAverageWeight = 0.85f;
+
+        clientAverageRtt = clientAverageRtt * pingMovingAverageWeight + clientRtt * (1 - pingMovingAverageWeight);
+
+        double clientLastForwardDelay;
+        if (senderRtt < clientRtt)
+        {
+            clientLastForwardDelay = clientAverageRtt / 2 + (clientRtt - senderRtt);
+        }
+        else
+        {
+            clientLastForwardDelay = ClientAverageRtt / 2;
+        }
+
+        ClientRtt = clientRtt;
+        ClientAverageRtt = clientAverageRtt;
+        ClientLastForwardDelay = clientLastForwardDelay;
     }
 
     #region Set

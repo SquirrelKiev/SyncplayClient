@@ -19,17 +19,17 @@ public record StateCommand
     public record PingInfo
     {
         // not sure what type this should be
-        [JsonPropertyName("latencyCalculation")]
-        public double LatencyCalculation { get; set; }
+        [JsonPropertyName("latencyCalculation"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public double? LatencyCalculation { get; init; }
 
-        [JsonPropertyName("clientLatencyCalculation")]
-        public double ClientLatencyCalculation { get; set; } = 0d;
+        [JsonPropertyName("clientLatencyCalculation"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public double? ClientLatencyCalculation { get; init; }
 
         [JsonPropertyName("serverRtt"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public double? ServerRtt { get; set; }
+        public double? ServerRtt { get; init; }
 
         [JsonPropertyName("clientRtt"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public double? ClientRtt { get; set; }
+        public double? ClientRtt { get; init; }
     }
 
     [UsedImplicitly]
@@ -37,8 +37,12 @@ public record StateCommand
     {
         [JsonPropertyName("position")] public float Position { get; init; }
         [JsonPropertyName("paused")] public bool Paused { get; init; }
-        [JsonPropertyName("doSeek")] public bool? DoSeek { get; init; }
-        [JsonPropertyName("setBy")] public string? SetBy { get; init; }
+
+        [JsonPropertyName("doSeek"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public bool? DoSeek { get; init; }
+
+        [JsonPropertyName("setBy"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? SetBy { get; init; }
     }
 
     [UsedImplicitly]
@@ -49,13 +53,15 @@ public record StateCommand
 
         [JsonPropertyName("client"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonInclude]
         private int Client { get; init; } = 0;
-        
+
+        [JsonIgnore]
         public bool ServerIgnoring
         {
             get => Server > 0;
             init => Server = value ? 1 : 0;
         }
 
+        [JsonIgnore]
         public bool ClientIgnoring
         {
             get => Client > 0;

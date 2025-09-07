@@ -12,6 +12,8 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
     public async Task RunAsync(string host, int port, string? hostPassword, string roomName, string username,
         CancellationToken token)
     {
+        client.RequestPassiveStateReport += ReportCurrentPlaybackState;
+
         client.OnHelloReceived += HelloReceived;
         client.OnChatMessageReceived += ChatMessageReceived;
         client.OnUserJoined += UserJoined;
@@ -20,6 +22,7 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
         client.OnPlaylistChanged += PlaylistChanged;
         client.OnPlaylistIndexChanged += PlaylistIndexChanged;
         client.OnUserFileChanged += UserFileChanged;
+        client.OnForcedPlaybackState += ForcedPlaybackState;
 
         await client.ConnectAsync(host, port, hostPassword, roomName, username, token);
 
@@ -93,9 +96,24 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
                     usersToMonitor.Remove(desiredUser);
             });
         }
-        else if (segments[0] == "file-test-mono")
+        else if (segments[0] == "file-test")
         {
             Task.Run(async () => { await client.SetFileAsync(new MediaFile("test.mkv", 10, 1000000000)); });
+        }
+        else if (segments[0] == "seek")
+        {
+            Task.Run(async () =>
+            {
+                if (segments.Length != 2)
+                {
+                    await client.SendChatMessageAsync($"Usage: {prefix}seek <seconds>");
+                    return;
+                }
+
+                var seconds = int.Parse(segments[1]);
+                await client.ForcePlaybackStateAsync(client.ServerPaused, seconds, true);
+                await client.SendChatMessageAsync($"Seeked to {seconds} seconds!");
+            });
         }
     }
 
@@ -150,5 +168,17 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
             await client.SendChatMessageAsync(
                 $"was originally {args.PreviousFile?.Name}. new file is {args.User.FileInfo?.Duration}s long, {args.User.FileInfo?.FileSize} big.");
         });
+    }
+
+    private void ForcedPlaybackState()
+    {
+        Task.Run(async () =>
+            await client.SendChatMessageAsync(
+                $"playback state was forced to {client.ServerPlaybackPosition}s, {(client.ServerPaused ? "paused" : "playing")}, {(client.ServerLastPlaybackWasSeek ? "seeking" : "seekn't")}"));
+    }
+
+    private PassiveStateReport ReportCurrentPlaybackState()
+    {
+        return new PassiveStateReport(client.ServerPlaybackPosition, client.ServerPaused);
     }
 }
