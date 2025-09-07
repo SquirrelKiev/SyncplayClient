@@ -53,31 +53,19 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
                 await client.SendChatMessageAsync(
                     $"There are {client.Users.Count} users in this room: {client.Users.Select(x => x.Username).Humanize()}"));
         }
-        else if (segments[0] == "playlist-test")
-        {
-            Task.Run(async () =>
-            {
-                await client.SetPlaylistAsync([
-                    "some-cool-video.mkv", "another-cool-video.mkv", "yet-another-cool-video.mkv",
-                    "and-another-cool-video.mkv"
-                ]);
-
-                await client.SetPlaylistIndexAsync(0);
-
-                await client.SendChatMessageAsync("Playlist set!");
-            });
-        }
-        else if (segments[0] == "toggle-ready")
+        // toggles the bot's ready state
+        else if (segments[0] == "ready")
         {
             Task.Run(async () => { await client.SetReadyAsync(!client.CurrentUser.IsReady); });
         }
-        else if (segments[0] == "file-copy-toggle")
+        // toggles copying the specified user's reported file state to the bot's reported file state
+        else if (segments[0] == "copy-file")
         {
             Task.Run(async () =>
             {
                 if (segments.Length != 2)
                 {
-                    await client.SendChatMessageAsync($"Usage: {prefix}file-copy-toggle <username>");
+                    await client.SendChatMessageAsync($"Usage: {prefix}copy-file <username>");
                     return;
                 }
 
@@ -96,10 +84,6 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
                     usersToMonitor.Remove(desiredUser);
             });
         }
-        else if (segments[0] == "file-test")
-        {
-            Task.Run(async () => { await client.SetFileAsync(new MediaFile("test.mkv", 10, 1000000000)); });
-        }
         else if (segments[0] == "seek")
         {
             Task.Run(async () =>
@@ -114,6 +98,25 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
                 await client.ForcePlaybackStateAsync(client.ServerPaused, seconds, true);
                 await client.SendChatMessageAsync($"Seeked to {seconds} seconds!");
             });
+        }
+        // dumb tests
+        else if (segments[0] == "playlist-test")
+        {
+            Task.Run(async () =>
+            {
+                await client.SetPlaylistAsync([
+                    "some-cool-video.mkv", "another-cool-video.mkv", "yet-another-cool-video.mkv",
+                    "and-another-cool-video.mkv"
+                ]);
+
+                await client.SetPlaylistIndexAsync(0);
+
+                await client.SendChatMessageAsync("Playlist set!");
+            });
+        }
+        else if (segments[0] == "file-test")
+        {
+            Task.Run(async () => { await client.SetFileAsync(new MediaFile("test.mkv", 10, 1000000000)); });
         }
     }
 
