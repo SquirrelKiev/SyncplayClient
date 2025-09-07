@@ -4,6 +4,7 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using JetBrains.Annotations;
@@ -53,6 +54,8 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     [PublicAPI] public bool ServerLastPlaybackWasSeek { get; private set; }
     [PublicAPI] public IReadOnlyList<string> ServerPlaylist { get; private set; } = [];
     [PublicAPI] public int ServerPlaylistIndex { get; private set; } = 0;
+
+    [PublicAPI] public X509Certificate? TlsCertificate => (currentStream as SslStream)?.RemoteCertificate;
 
     [PublicAPI] public string? ServerSelectedPlaylistEntry => ServerPlaylist.ElementAtOrDefault(ServerPlaylistIndex);
 
