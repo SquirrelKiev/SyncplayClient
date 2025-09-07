@@ -68,6 +68,9 @@ public record SetCommand
 
         [JsonPropertyName("manuallyInitiated")]
         public bool ManuallyInitiated { get; init; }
+
+        [JsonPropertyName("setBy"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? SetBy { get; init; }
     }
 
     [UsedImplicitly]

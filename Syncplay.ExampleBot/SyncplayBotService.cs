@@ -56,7 +56,28 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
         // toggles the bot's ready state
         else if (segments[0] == "ready")
         {
-            Task.Run(async () => { await client.SetReadyAsync(!client.CurrentUser.IsReady); });
+            Task.Run(async () =>
+            {
+                if (segments.Length == 1)
+                {
+                    await client.SetReadyAsync(!client.CurrentUser.IsReady);
+                }
+                else if (segments.Length == 2)
+                {
+                    var username = segments[1];
+                    if (!client.TryGetUser(username, out var user))
+                    {
+                        await client.SendChatMessageAsync($"User {username} not found.");
+                        return;
+                    }
+
+                    await client.SetReadyAsync(username, !user.IsReady);
+                }
+                else
+                {
+                    await client.SendChatMessageAsync("Usage: ?ready [username]");
+                }
+            });
         }
         // toggles copying the specified user's reported file state to the bot's reported file state
         else if (segments[0] == "copy-file")
@@ -138,8 +159,10 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
         Task.Run(async () => await client.SendChatMessageAsync($"bye bye {user.Username}!"));
     }
 
-    private void UserReady(SyncplayUser user)
+    private void UserReady(UserReadyStateChangedEventArgs args)
     {
+        var user = args.User;
+
         Task.Run(async () =>
             await client.SendChatMessageAsync($"oo {user.Username} is{(user.IsReady ? "" : " NOT")} ready!"));
     }

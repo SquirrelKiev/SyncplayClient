@@ -61,7 +61,8 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     private double ClientAverageRtt { get; set; }
     [PublicAPI] public double ServerRtt { get; private set; }
 
-    [PublicAPI] public event Action<SyncplayUser>? OnUserJoined, OnUserLeft, OnUserReadyStateChanged;
+    [PublicAPI] public event Action<SyncplayUser>? OnUserJoined, OnUserLeft;
+    [PublicAPI] public event Action<UserReadyStateChangedEventArgs>? OnUserReadyStateChanged;
 
     // TODO: Change this to an OnReady, that makes sure we've received users etc
     // (Hello command gets sent along side a lot of other state commands, and we need to manually ask for a user list)
@@ -220,7 +221,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     }
 
     [PublicAPI]
-    public async Task SetReadyAsync(bool ready)
+    public async Task SetReadyAsync(bool ready, bool manuallyInitiated = true)
     {
         ThrowIfNotReady();
 
@@ -228,7 +229,26 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         {
             Ready = new SetCommand.ReadyInfo()
             {
-                IsReady = ready
+                IsReady = ready,
+                ManuallyInitiated = manuallyInitiated
+            }
+        });
+
+        await WriteDataAsync(data);
+    }
+
+    [PublicAPI]
+    public async Task SetReadyAsync(string username, bool ready, bool manuallyInitiated = true)
+    {
+        ThrowIfNotReady();
+
+        var data = new RootCommand(new SetCommand()
+        {
+            Ready = new SetCommand.ReadyInfo()
+            {
+                IsReady = ready,
+                Username = username,
+                ManuallyInitiated = manuallyInitiated
             }
         });
 
@@ -277,8 +297,11 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     }
 
     [PublicAPI]
-    public SyncplayUser? GetUser(string username)
+    public SyncplayUser? GetUser(string? username)
     {
+        if (username == null)
+            return null;
+
         userlist.TryGetValue(username, out var userObject);
 
         return userObject;
@@ -632,7 +655,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         user.IsReady = readyInfo.IsReady.Value;
         logger.LogTrace("Set user {username} ready state as {readyState}", readyInfo.Username, readyInfo.IsReady.Value);
 
-        OnUserReadyStateChanged?.Invoke(user);
+        OnUserReadyStateChanged?.Invoke(new UserReadyStateChangedEventArgs(user, GetUser(readyInfo.SetBy)));
     }
 
     private void HandleSet_PlaylistChange(SetCommand.PlaylistChangeInfo playlistChangeInfo)
@@ -646,7 +669,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
         // not sure if I should just return the username or SyncplayUser here
         OnPlaylistChanged?.Invoke(new PlaylistChangedEventArgs(oldPlaylist, ServerPlaylist,
-            playlistChangeInfo.ChangedBy));
+            GetUser(playlistChangeInfo.ChangedBy)));
     }
 
     private void HandleSet_PlaylistIndex(SetCommand.PlaylistIndexInfo playlistIndexInfo)
@@ -659,7 +682,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
             playlistIndexInfo.ChangedBy, playlistIndexInfo.Index, ServerSelectedPlaylistEntry);
 
         OnPlaylistIndexChanged?.Invoke(
-            new PlaylistIndexChangedEventArgs(oldIndex, ServerPlaylistIndex, playlistIndexInfo.ChangedBy));
+            new PlaylistIndexChangedEventArgs(oldIndex, ServerPlaylistIndex, GetUser(playlistIndexInfo.ChangedBy)));
     }
 
     #endregion Set
