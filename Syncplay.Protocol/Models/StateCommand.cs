@@ -48,24 +48,10 @@ public record StateCommand
     [UsedImplicitly]
     public record IgnoringOnTheFlyInfo
     {
-        [JsonPropertyName("server"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonInclude]
-        private int Server { get; init; } = 0;
+        [JsonPropertyName("server"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int Server { get; init; } = 0;
 
-        [JsonPropertyName("client"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonInclude]
-        private int Client { get; init; } = 0;
-
-        [JsonIgnore]
-        public bool ServerIgnoring
-        {
-            get => Server > 0;
-            init => Server = value ? 1 : 0;
-        }
-
-        [JsonIgnore]
-        public bool ClientIgnoring
-        {
-            get => Client > 0;
-            init => Client = value ? 1 : 0;
-        }
+        [JsonPropertyName("client"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int Client { get; init; } = 0;
     }
 }

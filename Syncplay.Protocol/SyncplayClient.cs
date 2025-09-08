@@ -78,6 +78,8 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
     [PublicAPI] public event Func<PassiveStateReport?>? RequestPassiveStateReport;
 
+    private int clientIgnoringOnTheFly;
+
     private readonly Dictionary<string, SyncplayUser> userlist = [];
     private readonly TcpClient tcpClient = new();
     private Stream? currentStream;
@@ -287,7 +289,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
             },
             IgnoringOnTheFly = new StateCommand.IgnoringOnTheFlyInfo()
             {
-                ClientIgnoring = true
+                Client = ++clientIgnoringOnTheFly
             },
             Ping = new StateCommand.PingInfo()
             {
@@ -480,36 +482,67 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
         if (serverState.PlayState != null)
         {
-            ServerPlaybackPosition = serverState.PlayState.Position;
-            ServerPaused = serverState.PlayState.Paused;
-            ServerPlaybackSetBy = serverState.PlayState.SetBy;
-            ServerLastPlaybackWasSeek = serverState.PlayState.DoSeek ?? false;
-
-            if (serverState.Ping != null && !ServerPaused)
+            // don't do anything if we have pending forced state changes that we're waiting to be acknowledged
+            // unless the server demands a change in which case we barrel along
+            if (clientIgnoringOnTheFly == 0 || serverState.IgnoringOnTheFly?.Server != 0)
             {
-                ServerPlaybackPosition = (float)(ServerPlaybackPosition + ClientLastForwardDelay);
+                ServerPlaybackPosition = serverState.PlayState.Position;
+                ServerPaused = serverState.PlayState.Paused;
+                ServerPlaybackSetBy = serverState.PlayState.SetBy;
+                ServerLastPlaybackWasSeek = serverState.PlayState.DoSeek ?? false;
+
+                if (serverState.Ping != null && !ServerPaused)
+                {
+                    ServerPlaybackPosition = (float)(ServerPlaybackPosition + ClientLastForwardDelay);
+                }
             }
 
-            if (serverState.IgnoringOnTheFly?.ServerIgnoring == true)
+            if (serverState.IgnoringOnTheFly != null)
             {
-                responseState.IgnoringOnTheFly = new StateCommand.IgnoringOnTheFlyInfo
+                // server has acknowledged our forced state change
+                if (serverState.IgnoringOnTheFly.Client == clientIgnoringOnTheFly)
                 {
-                    ServerIgnoring = true
-                };
+                    clientIgnoringOnTheFly = 0;
+                }
 
-                if (serverState.IgnoringOnTheFly.ClientIgnoring == false)
-                    OnForcedPlaybackState?.Invoke();
+                // we've got a forced state change from the server that we need to acknowledge
+                if (serverState.IgnoringOnTheFly.Server != 0)
+                {
+                    clientIgnoringOnTheFly = 0;
+
+                    responseState.IgnoringOnTheFly = new StateCommand.IgnoringOnTheFlyInfo
+                    {
+                        Server = serverState.IgnoringOnTheFly.Server
+                    };
+                }
             }
 
-            var passiveStateReport = RequestPassiveStateReport?.Invoke();
+            if (serverState.IgnoringOnTheFly?.Server != 0 && serverState.IgnoringOnTheFly?.Client == 0)
+                OnForcedPlaybackState?.Invoke();
 
-            if (passiveStateReport != null)
+            // if (serverState.IgnoringOnTheFly?.Server > 0)
+            // {
+            //     responseState.IgnoringOnTheFly = new StateCommand.IgnoringOnTheFlyInfo
+            //     {
+            //         Server = serverState.IgnoringOnTheFly.Server
+            //     };
+            //
+            //     if (serverState.IgnoringOnTheFly.Client == 0)
+            //         OnForcedPlaybackState?.Invoke();
+            // }
+
+            if (clientIgnoringOnTheFly == 0)
             {
-                responseState.PlayState = new StateCommand.PlayStateInfo
+                var passiveStateReport = RequestPassiveStateReport?.Invoke();
+
+                if (passiveStateReport != null)
                 {
-                    Position = passiveStateReport.Position,
-                    Paused = passiveStateReport.Paused
-                };
+                    responseState.PlayState = new StateCommand.PlayStateInfo
+                    {
+                        Position = passiveStateReport.Position,
+                        Paused = passiveStateReport.Paused
+                    };
+                }
             }
         }
 
