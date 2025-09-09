@@ -1,14 +1,20 @@
 ﻿using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using JetBrains.Annotations;
 
 namespace SyncPlay.Protocol.Models;
 
-public class SyncplayUser
+public class RoomUser
 {
-    internal SyncplayUser()
+    // so JSON deserialization can create an instance of this class
+    [UsedImplicitly]
+#pragma warning disable CS8618
+    internal RoomUser()
     {
     }
+#pragma warning restore CS8618
 
-    public SyncplayUser(string username, SetCommand.SetUserInfo userData)
+    public RoomUser(string username, SetCommand.SetUserInfo userData)
     {
         Debug.Assert(userData.EventInfo != null);
         Debug.Assert(userData.EventInfo.Version != null);
@@ -22,16 +28,18 @@ public class SyncplayUser
         Features = userData.EventInfo.Features;
 
         Username = username;
+        RoomName = userData.RoomInfo.Name;
     }
 
-    public SyncplayUser(string username, ListCommandUserInfo userInfo)
+    public RoomUser(string username, ListCommandUserInfo userInfo, string roomName)
     {
-        UpdateProperties(userInfo);
+        UpdateProperties(userInfo, roomName);
 
         Username = username;
     }
 
-    public void UpdateProperties(ListCommandUserInfo userInfo)
+    [MemberNotNull(nameof(Features), nameof(RoomName))]
+    public void UpdateProperties(ListCommandUserInfo userInfo, string roomName)
     {
         IsReady = userInfo.IsReady ?? false;
         IsController = userInfo.Controller;
@@ -39,8 +47,10 @@ public class SyncplayUser
         Features = userInfo.Features;
         Position = userInfo.Position;
         FileInfo = userInfo.FileInfo;
+        RoomName = roomName;
     }
 
+    public string RoomName { get; internal set; }
     public string Username { get; internal set; } = null!;
     public bool IsReady { get; internal set; }
     public bool IsPaused { get; internal set; }
@@ -49,5 +59,5 @@ public class SyncplayUser
     public bool IsController { get; internal set; }
 
     public string? Version { get; internal set; }
-    public FeatureSet Features { get; internal set; } = null!;
+    public FeatureSet Features { get; internal set; }
 }

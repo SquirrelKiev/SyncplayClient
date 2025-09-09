@@ -29,7 +29,7 @@ public record SetCommand
     public record SetUserInfo
     {
         [JsonPropertyName("room"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public required SetUserRoomInfo RoomInfo { get; init; }
+        public SetUserRoomInfo? RoomInfo { get; init; }
 
         [UsedImplicitly]
         public class SetUserRoomInfo

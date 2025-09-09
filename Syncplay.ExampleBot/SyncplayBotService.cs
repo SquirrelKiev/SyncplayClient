@@ -7,7 +7,7 @@ namespace Syncplay.ExampleBot;
 
 public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotService> logger)
 {
-    private readonly HashSet<SyncplayUser> usersToMonitor = [];
+    private readonly HashSet<RoomUser> usersToMonitor = [];
 
     public async Task RunAsync(string host, int port, string? hostPassword, string roomName, string username,
         CancellationToken token)
@@ -16,12 +16,17 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
 
         client.OnHelloReceived += HelloReceived;
         client.OnChatMessageReceived += ChatMessageReceived;
-        client.OnUserJoined += UserJoined;
-        client.OnUserLeft += UserLeft;
-        client.OnUserReadyStateChanged += UserReady;
+
         client.OnPlaylistChanged += PlaylistChanged;
         client.OnPlaylistIndexChanged += PlaylistIndexChanged;
+
+        client.OnUserJoined += UserJoined;
+        client.OnUserLeft += UserLeft;
+
+        client.OnUserReadyStateChanged += UserReady;
         client.OnUserFileChanged += UserFileChanged;
+        client.OnUserRoomChanged += UserRoomChanged;
+
         client.OnForcedPlaybackState += ForcedPlaybackState;
 
         await client.ConnectAsync(host, port, hostPassword, roomName, username, token);
@@ -147,16 +152,16 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
     }
 
 
-    private void UserJoined(SyncplayUser user)
+    private void UserJoined(RoomUser user)
     {
-        Task.Run(async () => await client.SendChatMessageAsync($"hello {user.Username}!"));
+        Task.Run(async () => await client.SendChatMessageAsync($"hello {user.Username} from room {user.RoomName}!"));
     }
 
-    private void UserLeft(SyncplayUser user)
+    private void UserLeft(RoomUser user)
     {
         usersToMonitor.Remove(user);
 
-        Task.Run(async () => await client.SendChatMessageAsync($"bye bye {user.Username}!"));
+        Task.Run(async () => await client.SendChatMessageAsync($"bye bye {user.Username} from room {user.RoomName}!"));
     }
 
     private void UserReady(UserReadyStateChangedEventArgs args)
@@ -190,9 +195,18 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
             }
 
             await client.SendChatMessageAsync(
-                $"user {args.User.Username} is now using file {args.User.FileInfo?.Name}!");
+                $"user {args.User.Username} from room {args.User.RoomName} is now using file {args.User.FileInfo?.Name}!");
             await client.SendChatMessageAsync(
                 $"was originally {args.PreviousFile?.Name}. new file is {args.User.FileInfo?.Duration}s long, {args.User.FileInfo?.FileSize} big.");
+        });
+    }
+
+    private void UserRoomChanged(UserRoomChangedEventArgs args)
+    {
+        Task.Run(async () =>
+        {
+            await client.SendChatMessageAsync(
+                $"user {args.User.Username} has changed from room {args.OldRoomName} to {args.User.RoomName}");
         });
     }
 

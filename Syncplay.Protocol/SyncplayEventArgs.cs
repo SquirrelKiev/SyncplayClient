@@ -5,10 +5,12 @@ namespace SyncPlay.Protocol;
 public record PlaylistChangedEventArgs(
     IReadOnlyList<string> OldPlaylist,
     IReadOnlyList<string> Playlist,
-    SyncplayUser? ChangedBy);
+    RoomUser? ChangedBy);
 
-public record PlaylistIndexChangedEventArgs(int OldIndex, int Index, SyncplayUser? ChangedBy);
+public record PlaylistIndexChangedEventArgs(int OldIndex, int Index, RoomUser? ChangedBy);
 
-public record UserFileChangedEventArgs(SyncplayUser User, MediaFile? PreviousFile);
+public record UserFileChangedEventArgs(RoomUser User, MediaFile? PreviousFile);
 
-public record UserReadyStateChangedEventArgs(SyncplayUser User, SyncplayUser? ChangedBy);
+public record UserReadyStateChangedEventArgs(RoomUser User, RoomUser? ChangedBy);
+
+public record UserRoomChangedEventArgs(RoomUser User, string OldRoomName);

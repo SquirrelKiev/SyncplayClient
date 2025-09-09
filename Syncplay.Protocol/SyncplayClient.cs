@@ -26,10 +26,10 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     [PublicAPI] public FeatureSet? ServerFeatures { get; private set; }
     [PublicAPI] public string? ServerVersion { get; private set; }
     [PublicAPI] public string? MessageOfTheDay { get; private set; }
-    [PublicAPI] public IReadOnlyCollection<SyncplayUser> Users => userlist.Values;
+    [PublicAPI] public IReadOnlyCollection<RoomUser> Users => userlist.Values;
 
     [PublicAPI]
-    public SyncplayUser CurrentUser
+    public RoomUser CurrentUser
     {
         get
         {
@@ -45,7 +45,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         }
     }
 
-    private SyncplayUser? currentUser;
+    private RoomUser? currentUser;
 
     // wonder if this should be a float or a double
     [PublicAPI] public float ServerPlaybackPosition { get; private set; } = 0f;
@@ -64,7 +64,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     private double ClientAverageRtt { get; set; }
     [PublicAPI] public double ServerRtt { get; private set; }
 
-    [PublicAPI] public event Action<SyncplayUser>? OnUserJoined, OnUserLeft;
+    [PublicAPI] public event Action<RoomUser>? OnUserJoined, OnUserLeft;
     [PublicAPI] public event Action<UserReadyStateChangedEventArgs>? OnUserReadyStateChanged;
 
     // TODO: Change this to an OnReady, that makes sure we've received users etc
@@ -75,12 +75,13 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     [PublicAPI] public event Action<PlaylistChangedEventArgs>? OnPlaylistChanged;
     [PublicAPI] public event Action<PlaylistIndexChangedEventArgs>? OnPlaylistIndexChanged;
     [PublicAPI] public event Action<UserFileChangedEventArgs>? OnUserFileChanged;
+    [PublicAPI] public event Action<UserRoomChangedEventArgs>? OnUserRoomChanged;
 
     [PublicAPI] public event Func<PassiveStateReport?>? RequestPassiveStateReport;
 
     private int clientIgnoringOnTheFly;
 
-    private readonly Dictionary<string, SyncplayUser> userlist = [];
+    private readonly Dictionary<string, RoomUser> userlist = [];
     private readonly TcpClient tcpClient = new();
     private Stream? currentStream;
     private StreamReader? reader;
@@ -302,7 +303,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     }
 
     [PublicAPI]
-    public SyncplayUser? GetUser(string? username)
+    public RoomUser? GetUser(string? username)
     {
         if (username == null)
             return null;
@@ -313,7 +314,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     }
 
     [PublicAPI]
-    public bool TryGetUser(string username, [NotNullWhen(true)] out SyncplayUser? user) =>
+    public bool TryGetUser(string username, [NotNullWhen(true)] out RoomUser? user) =>
         userlist.TryGetValue(username, out user);
 
     #endregion Public API
@@ -476,7 +477,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
                 ClientLatencyCalculation = clientLatencyCalc,
                 ClientRtt = ClientRtt
             };
-            logger.LogInformation("ping: {ping}, serverrtt: {serverRtt}, fwdelay: {forward}", responseState.Ping,
+            logger.LogTrace("ping: {ping}, serverrtt: {serverRtt}, fwdelay: {forward}", responseState.Ping,
                 serverRtt, ClientLastForwardDelay);
         }
 
@@ -621,18 +622,14 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     {
         foreach (var (username, userData) in users)
         {
-            // TODO: Check if this is necessary. Test against servers with "--isolate-room" disabled
-            if (userData.RoomInfo.Name != RoomName)
-                continue;
-
             if (userData.EventInfo != null)
             {
                 if (userData.EventInfo.Joined)
                 {
                     logger.LogInformation("User {username} has joined room {roomName}.", username,
-                        userData.RoomInfo.Name);
+                        userData.RoomInfo?.Name);
 
-                    var user = new SyncplayUser(username, userData);
+                    var user = new RoomUser(username, userData);
                     userlist.Add(user.Username, user);
 
                     OnUserJoined?.Invoke(user);
@@ -640,7 +637,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
                 else if (userData.EventInfo.Left)
                 {
                     logger.LogInformation("User {username} has left room {roomName}.", username,
-                        userData.RoomInfo.Name);
+                        userData.RoomInfo?.Name);
 
                     if (!TryGetUser(username, out var user))
                     {
@@ -653,6 +650,26 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
                     userlist.Remove(user.Username);
 
                     OnUserLeft?.Invoke(user);
+                }
+            }
+            else if (userData.RoomInfo != null)
+            {
+                if (!TryGetUser(username, out var user))
+                {
+                    logger.LogError(
+                        "Internal error: User {username} could not be found in local user list! This is very bad, we should be aware of them.",
+                        username);
+                    continue;
+                }
+
+                if (user.RoomName != userData.RoomInfo.Name)
+                {
+                    var oldRoomName = user.RoomName;
+
+                    logger.LogTrace("User {username} has changed room from {oldRoomName} to {roomName}.", username,
+                        oldRoomName, userData.RoomInfo.Name);
+
+                    OnUserRoomChanged?.Invoke(new UserRoomChangedEventArgs(user, oldRoomName));
                 }
             }
 
@@ -703,7 +720,7 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         logger.LogTrace("{user} set server playlist to {playlist}", playlistChangeInfo.ChangedBy,
             playlistChangeInfo.Files);
 
-        // not sure if I should just return the username or SyncplayUser here
+        // not sure if I should just return the username or RoomUser here
         OnPlaylistChanged?.Invoke(new PlaylistChangedEventArgs(oldPlaylist, ServerPlaylist,
             GetUser(playlistChangeInfo.ChangedBy)));
     }
@@ -727,25 +744,22 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
     {
         Debug.Assert(RoomName != null);
 
-        // TODO: investigate why it sends multiple rooms. --isolate-room?
-        if (!list.TryGetValue(RoomName, out var usernameToDataMap))
+        foreach (var (roomName, usernameToDataMap) in list)
         {
-            return;
-        }
-
-        foreach (var (username, userInfo) in usernameToDataMap)
-        {
-            if (TryGetUser(username, out var existingUser))
+            foreach (var (username, userInfo) in usernameToDataMap)
             {
-                logger.LogTrace("Existing user {username}, updating state.", username);
-                existingUser.UpdateProperties(userInfo);
-            }
-            else
-            {
-                logger.LogTrace("Not seen user {username} before, adding to user list.", username);
+                if (TryGetUser(username, out var existingUser))
+                {
+                    logger.LogTrace("Existing user {username}, updating state.", username);
+                    existingUser.UpdateProperties(userInfo, roomName);
+                }
+                else
+                {
+                    logger.LogTrace("Not seen user {username} before, adding to user list.", username);
 
-                existingUser = new SyncplayUser(username, userInfo);
-                userlist.Add(existingUser.Username, existingUser);
+                    existingUser = new RoomUser(username, userInfo, roomName);
+                    userlist.Add(existingUser.Username, existingUser);
+                }
             }
         }
     }
