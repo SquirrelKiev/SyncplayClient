@@ -23,19 +23,17 @@ public record SetCommand
     [JsonPropertyName("file"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public MediaFile? File { get; init; }
 
+    /// <remarks>Only used for client requests</remarks>
+    [JsonPropertyName("room"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public RoomInfo? Room { get; init; }
+
     [UsedImplicitly] [JsonExtensionData] public Dictionary<string, JsonElement>? ExtraProperties { get; init; }
 
     [UsedImplicitly]
     public record SetUserInfo
     {
         [JsonPropertyName("room"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public SetUserRoomInfo? RoomInfo { get; init; }
-
-        [UsedImplicitly]
-        public class SetUserRoomInfo
-        {
-            [JsonPropertyName("name")] public required string Name { get; init; }
-        }
+        public RoomInfo? RoomInfo { get; init; }
 
         [JsonPropertyName("event"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public SetUserEventInfo? EventInfo { get; init; }

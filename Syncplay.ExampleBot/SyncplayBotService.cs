@@ -1,4 +1,5 @@
-﻿using Humanizer;
+﻿using System.Diagnostics;
+using Humanizer;
 using Microsoft.Extensions.Logging;
 using SyncPlay.Protocol;
 using SyncPlay.Protocol.Models;
@@ -50,13 +51,18 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
 
         if (segments[0] == "hello")
         {
-            Task.Run(async () => await client.SendChatMessageAsync("hello!"));
+            Task.Run(() => client.SendChatMessageAsync("hello!"));
         }
         else if (segments[0] == "users")
         {
-            Task.Run(async () =>
-                await client.SendChatMessageAsync(
-                    $"There are {client.Users.Count} users in this room: {client.Users.Select(x => x.Username).Humanize()}"));
+            Task.Run(() =>
+            {
+                var users = client.Users.Where(x => x.RoomName == client.RoomName)
+                    .Select(x => x.Username)
+                    .Humanize();
+
+                return client.SendChatMessageAsync(users);
+            });
         }
         // toggles the bot's ready state
         else if (segments[0] == "ready")
@@ -125,6 +131,21 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
                 await client.SendChatMessageAsync($"Seeked to {seconds} seconds!");
             });
         }
+        else if (segments[0] == "room")
+        {
+            Task.Run(async () =>
+            {
+                if (segments.Length != 2)
+                {
+                    await client.SendChatMessageAsync($"Usage: {prefix}room <room name>");
+                    return;
+                }
+
+                var roomName = segments[1];
+
+                await client.MoveToRoomAsync(roomName);
+            });
+        }
         // dumb tests
         else if (segments[0] == "playlist-test")
         {
@@ -142,7 +163,26 @@ public class SyncplayBotService(SyncplayClient client, ILogger<SyncplayBotServic
         }
         else if (segments[0] == "file-test")
         {
-            Task.Run(async () => { await client.SetFileAsync(new MediaFile("test.mkv", 10, 1000000000)); });
+            Task.Run(() => client.SetFileAsync(new MediaFile("test.mkv", 10, 1000000000)));
+        }
+        else if (segments[0] == "room-test")
+        {
+            Task.Run(async () =>
+            {
+                var ogRoomName = client.RoomName;
+                Debug.Assert(ogRoomName != null);
+                var roomName = "test-room";
+                if (segments.Length == 2)
+                {
+                    roomName = segments[1];
+                }
+
+                await client.MoveToRoomAsync(roomName);
+
+                await Task.Delay(5000);
+
+                await client.MoveToRoomAsync(ogRoomName);
+            });
         }
     }
 

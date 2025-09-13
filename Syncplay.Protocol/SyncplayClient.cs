@@ -14,18 +14,25 @@ using SyncPlay.Protocol.Models;
 
 namespace SyncPlay.Protocol;
 
+// TODO: Add support for controlled rooms
 public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 {
     // not sure if I should have these as nullable or not - for API consumer reasons
     // the only time they're null is if the user hasn't called ConnectAsync yet for whatever reason
     // but that shouldn't ever really be a problem
     [PublicAPI] public string? Host { get; private set; }
+
     [PublicAPI] public int? Port { get; private set; }
+
+    // TODO: username and RoomName should be replaced with CurrentUser
     [PublicAPI] public string? Username { get; private set; }
     [PublicAPI] public string? RoomName { get; private set; }
     [PublicAPI] public FeatureSet? ServerFeatures { get; private set; }
     [PublicAPI] public string? ServerVersion { get; private set; }
+
     [PublicAPI] public string? MessageOfTheDay { get; private set; }
+
+    // replace with IReadOnlyDictionary<string, RoomUser>?
     [PublicAPI] public IReadOnlyCollection<RoomUser> Users => userlist.Values;
 
     [PublicAPI]
@@ -300,6 +307,26 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
         });
 
         await WriteDataAsync(data);
+    }
+
+    [PublicAPI]
+    public async Task MoveToRoomAsync(string roomName)
+    {
+        ThrowIfNotReady();
+
+        var data = new RootCommand(new SetCommand()
+        {
+            Room = new RoomInfo()
+            {
+                Name = roomName
+            }
+        });
+
+        // TODO: batch
+        await WriteDataAsync(data);
+
+        // so we get the ready states
+        await RequestUserListRefreshAsync();
     }
 
     [PublicAPI]
@@ -668,6 +695,11 @@ public sealed class SyncplayClient(ILogger<SyncplayClient> logger) : IDisposable
 
                     logger.LogTrace("User {username} has changed room from {oldRoomName} to {roomName}.", username,
                         oldRoomName, userData.RoomInfo.Name);
+
+                    if (username == Username)
+                    {
+                        RoomName = userData.RoomInfo.Name;
+                    }
 
                     OnUserRoomChanged?.Invoke(new UserRoomChangedEventArgs(user, oldRoomName));
                 }
